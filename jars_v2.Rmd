@@ -18,14 +18,19 @@ library(mapproj)
 library(knitr)
 library(gganimate)
 
-jars <- read_csv("jars_20181108.csv")
-sites <- read_csv("sites_ll_20181108.csv")
+jars <- read_csv("jars_20181124.csv")
+sites <- read_csv("sites_ll_20181124.csv")
+
+n_suppliers <- sites %>% count(supplier_name) %>% nrow()
+n_rows <- nrow(jars)
+min_date <- min(jars$checked_at) %>% as_date()
+max_date <- max(jars$checked_at) %>% as_date()
 
 ```
 
 ## Introduction
 
-This is an exploratory data analysis of Honey sales data from Byron's Local honey jar scraper. There are 53 suppliers in the primary data set, and approximately 31,000 rows of data. Each row is a single observation of a honey product for sale at a single point in time on the supplier's website. A second table contains info about the individual websites that are scraped and the type of supplier. 
+This is an exploratory data analysis of Honey sales data from Byron's Local honey jar scraper. There are `r n_suppliers` suppliers in the primary data set, and `r n_rows` rows of data, captured between `r min_date` and `r max_date`. Each row is a single observation of a honey product for sale at a single point in time on the supplier's website. A second table contains info about the individual websites that are scraped and the type of supplier. 
 
 ***
 
@@ -56,7 +61,7 @@ Prior to this write-up I joined the postcode variable in the sites table to nati
 honey <-
   jars %>% 
   left_join(sites, by = "check_id") %>% 
-  select(c(2,4,5,6,8,9,13,14,15,17,19,20,23,24)) %>% 
+  select(c(2,4,5,6,8,9,14,15,16,18,20,21,25,26)) %>% 
   setNames(c("check_id", 
              "check_date", 
              "check_status",
@@ -87,45 +92,11 @@ honey <-
 honey <-
   honey %>% 
   filter(weight > 0,  # no weight
-         price_per_kilo < 50)  # price errors? 
+         weight < 5000,
+         price_per_kilo < 50,  # price errors? 
+         supplier != "Honeyguides")  # Poor pricing info
 
-```
-
-***
-
-## Results
-#### Weight and price
-The first hypotheses relate to jar weights, how these are changing over time, and the prices that different weights of jar can command. We'll start with prices since this is simple to work with. Firstly, is there a relationship between weight and price? If not, all economic theory is at stake, and I shall eat my hat.
-
-***
-
-```{r echo = FALSE, warning = FALSE, message = FALSE}
-
-honey %>% 
-  mutate(price = price/100) %>% 
-  ggplot(aes(weight, price)) +
-  geom_point() +
-  geom_smooth(method = "lm") +
-  labs(title = "Relationship between weight of jar and price",
-       subtitle = "All jars in the data set, with linear model added",
-       x = "Weight (g)",
-       y = "Price (£)",
-       caption = "\nPositive correlation (R = 0.670, F (1, 31373) = 7.307e+04, p < 0.001)")
-
-
-```
-
-***
-
-There is a **significant positive linear correlation between price and weight (p < 0.001)**, so the more honey you buy, the more money you can expect to pay. In other words, **Honey = Money**. Thankfully, the laws of supply and demand have survived. And some validation for the data set too. 
-
-To start exploring the data in more detail, I'll add *groupings* so it is easier to differentiate between jar weights. I'll use two separate groupings: the first using *manual bins* based on what small, medium and large jar weights might be; and the second bins defined using *statistical similarity (k-means clustering)*. 
-
-***
-
-
-```{r warning = FALSE, message = FALSE}
-
+# Add weight groupings
 honey <- 
   honey %>% 
   mutate(manual_bin = cut(weight, 
@@ -133,10 +104,12 @@ honey <-
                    labels = c("Taster","Small","Medium","Large","XL","1kg+")))
 
 honey$cluster <- kmeans(honey$weight, centers = 6)$clust
+
 ```
 
-
 ***
+
+I'll add *groupings* so it is easier to differentiate between jar weights. I'll use two separate groupings: the first using *manual bins* based on what small, medium and large jar weights might be; and the second bins defined using *statistical similarity (k-means clustering)*. 
 
 We can explore how observations fall between the two types of grouping using a heat map, and compare independence between groups statistically:
 
@@ -144,6 +117,7 @@ We can explore how observations fall between the two types of grouping using a h
 
 
 ``` {r echo = FALSE, warning = FALSE, message = FALSE}
+
 honey %>%
   mutate(cluster = as.factor(cluster)) %>% 
   group_by(cluster) %>% 
@@ -167,12 +141,56 @@ honey %>%
 
 ```
 
-
 ***
 
 This test helps us see whether the arbitrary cut-offs we have used for the manual bins differs significantly from where a statistical clustering would split jars by weight.
 
 A couple of the clusters map onto more than one manual grouping, but the groups aren't evenly split, suggesting there might be some further detail within our weights, but not much. However, chi-squared test shows that the **groups are independent (p < 0.001)**, and therefore validating our manual splits. For now, I will use the manual groups rather than the k-means clusters, since we don't gain much else from clustering, and the manual clusters are easier to understand. 
+
+***
+
+## Results
+#### Weight and price
+The first hypotheses relate to jar weights, how these are changing over time, and the prices that different weights of jar can command. We'll start with prices since this is simple to work with. Firstly, is there a relationship between weight and price? If not, all economic theory is at stake, and I shall eat my hat.
+
+***
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+
+honey %>% 
+  mutate(weekly = floor_date(check_date, "week")) %>% 
+  group_by(weekly, manual_bin) %>% 
+  mutate(weekly_mean = mean(price_per_kilo)) %>% 
+  ungroup() %>% 
+  ggplot(aes(weekly, price_per_kilo, group = weekly)) +
+  geom_boxplot() +
+  geom_point(aes(weekly, weekly_mean), colour = "red") +
+  facet_wrap(~manual_bin) +
+  labs(title = "Weekly price of honey by jar size over time",
+       caption = "Red dot = mean price; boxplot shows median and range",
+       x = "",
+       y = "Price per kilo")
+
+
+honey %>% 
+  mutate(price = price/100) %>% 
+  ggplot(aes(weight, price)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(title = "Relationship between weight of jar and price",
+       subtitle = "All jars in the data set, with linear model added",
+       x = "Weight (g)",
+       y = "Price (£)",
+       caption = "")
+
+lm(price~weight, data = honey) %>% 
+  summary()
+
+```
+
+***
+
+There is a **significant positive linear correlation between price and weight (p < 0.001)**, so the more honey you buy, the more money you can expect to pay. In other words, **Honey = Money**. Thankfully, the laws of supply and demand have survived. And some validation for the data set too. 
 
 ***
 
@@ -191,11 +209,13 @@ honey %>%
        subtitle = "Point represents a single product at a single point in time",
        x = "Jar weight (g)",
        y = "Price per kilo for jar (£)",
-       caption = "\nPolynomial regression line fitted (y ~ poly(x, 3))")
+       caption = "\nPolynomial regression line fitted (y ~ poly(x, 3))") +
+  ylim(0,50)
 
 honey %>% 
   lm(price_per_kilo~poly(weight, 3), data = .) %>% 
   summary()
+
 
 ```
 
@@ -227,6 +247,7 @@ In terms of change over time for these average prices, things appear relatively 
 ***
 
 ```{r echo = FALSE, warning = FALSE, message = FALSE}
+
 honey %>% 
   group_by(month = floor_date(check_date, "month"), manual_bin) %>% 
   summarise(mean_price = mean(price_per_kilo, na.rm = TRUE)) %>% 
@@ -268,7 +289,8 @@ honey %>%
        subtitle = "Data grouped by supplier for entire time range in data set",
        y = "Price per kilo (£)",
        x = "",
-       caption = "\nSuppliers ordered by median price per kilo")
+       caption = "\nSuppliers ordered by median price per kilo") +
+  ylim(0,50)
 
 ```
 
@@ -321,13 +343,14 @@ On the whole, the majority of sellers' prices remained relatively stable, reflec
 # Does average price per kilo change month to month
 # Filter for suppliers where prices change using standard deviation filter .1 (18 suppliers)
 honey %>% 
-  mutate(month = floor_date(check_date, "month")) %>% 
-  group_by(supplier, month) %>% 
+  mutate(weekly = floor_date(check_date, "week")) %>% 
+  group_by(supplier, weekly) %>% 
   summarise(mean_ppk = mean(price_per_kilo)) %>% 
   group_by(supplier) %>% 
   mutate(sd = sd(mean_ppk)) %>% 
   filter(sd > 0.1) %>%
-  ggplot(aes(month, mean_ppk)) +
+  ungroup() %>% 
+  ggplot(aes(weekly, mean_ppk)) +
   geom_smooth(method = "loess", formula = y~x, se = FALSE) +
   facet_wrap(~supplier) +
   scale_x_date(date_breaks = "1 months", date_labels = "%b") +
@@ -355,7 +378,8 @@ By using postcode data, joined with longitude and latitude, we can map the volum
 
 # Long and lat added in separate script from postcode data
 honey %>% 
-  group_by(postcode) %>% 
+  filter(!is.na(postcode)) %>% 
+  group_by(postcode, manual_bin) %>% 
   mutate(quant = n(),
          mean_ppk = mean(price_per_kilo)) %>% 
   ggplot(aes(long, lat, colour = mean_ppk, size = quant)) +
@@ -363,6 +387,7 @@ honey %>%
   borders("world", regions = "UK") +
   coord_map() +
   scale_color_gradient2(low = "green", mid = "orange", high = "red", midpoint = 25) +
+  facet_wrap(~manual_bin) +
   theme_void() +
   theme(legend.position = "bottom") +
   labs(title = "Average price of honey by supplier location",
@@ -383,6 +408,8 @@ Another couple of our hypotheses were around **honey type** - i.e. the flowers t
 ```{r echo = FALSE, warning = FALSE, message = FALSE}
 
 honey %>% 
+  filter(!is.na(postcode)) %>% 
+  # filter(honey_type %in% c("heather", "wildflower", "blossom", "apple")) %>% 
   group_by(postcode, honey_type) %>% 
   mutate(quant = n(),
          mean_ppk = mean(price_per_kilo)) %>% 
@@ -412,12 +439,14 @@ These maps also give a great view of the more obscure honey types for sale acros
 For instance, **dandelion and ivy honey command the highest price tags per kilo**, however there are very few of these products on the market. **Heather and variations of heather also command high prices**, and have significantly higher availability. 
 
 ```{r echo = FALSE, warning = FALSE, message = FALSE}
+
 honey %>% 
   group_by(honey_type) %>% 
   summarise(`Average price per kilo (£)` = mean(price_per_kilo, na.rm = TRUE),
             `Number of products for sale` = n()) %>% 
   arrange(desc(`Average price per kilo (£)`)) %>% 
   kable(digits = 2, caption = "Average honey price by type")
+
 ```
 
 ***
@@ -431,6 +460,7 @@ We can expand on the geographical mapping to look at **how the price and amount 
 
 month_supplies <- 
   honey %>% 
+  filter(!is.na(postcode)) %>% 
   mutate(month = floor_date(check_date, "month")) %>% 
   group_by(supplier, month) %>% 
   summarise(mean_price = mean(price_per_kilo), 
@@ -438,7 +468,7 @@ month_supplies <-
   ungroup() %>% 
   left_join(sites, by = c(supplier = "supplier_name")) %>% 
   distinct(supplier, month, .keep_all = TRUE) %>% 
-  select(c(1:4,18,19))
+  select(c(1:4,19,20))
   
   
 month_supplies %>% 
@@ -462,7 +492,7 @@ month_supplies %>%
 
 ***
 
-It looks like we have lower volumes in the first and last months of the data set; however I suspect this is due to the scrape not collecting as many values in these time frames rather than an underlying shortage of supply in the honey market. We can see that **the volume of products for sale and price per kils stay relatively stable**. This map might become valuable as the data set grows over time, but at this stage we're really only seeing variance in the items scraped and can't tell much about any market trends.
+It looks like we have lower volumes in the first and last months of the data set; however I suspect this is due to the scrape not collecting as many values in these time frames rather than an underlying shortage of supply in the honey market. We can see that **the volume of products for sale and price per kilo stay relatively stable**. This map might become valuable as the data set grows over time, but at this stage we're really only seeing variance in the items scraped and can't tell much about any market trends.
 
 In terms of what these maps tell us overall, it appears that you are best **avoiding suppliers based in London, the South East, the South West, Scotland and Wales**, and that you'll get the **best prices for honey from suppliers in the East Midlands and Yorkshire & Humber**. 
 
@@ -550,4 +580,14 @@ From the data analysed we can put together some relatively confident conclusions
 \n\n\n\n
 
 ***
+
+## Actions
+1. **Data quality**: We need additional data for products - location of hive / honey would give further detail (e.g. Aecre, Hive and Keeper)
+2. **Missing locations**: Explore whether products from the NW or England, NW of Wales, and East Anglia are on the market. If not, why?
+3. **XL honey jars**: There may be a gap in the market (or the scrape) for products between 600-1000g (e.g. 750g jar). This could be priced somewhere around the £15-20g per kilo mark and represent a cost saving to the customer and a high sale price per item.
+4. **Pricing strategy**: Try to ensure all products sold by Byron's Local meet the suggested market regression line for price per kilo.
+
+***
+
+
 
